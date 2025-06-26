@@ -2,6 +2,9 @@
 using System.Text;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.IO;
+using System.Collections.Generic;
+using System.Text.Json;
 
 class Program
 {
@@ -20,6 +23,14 @@ class Program
     const int LVM_GETITEMTEXTW = LVM_FIRST + 115;
 
     const int MAX_PATH = 260;
+
+    // Data structure for JSON serialization
+    class DesktopIcon
+    {
+        public string Name { get; set; } = string.Empty;
+        public int X { get; set; }
+        public int Y { get; set; }
+    }
 
     // Win32 structures
     [StructLayout(LayoutKind.Sequential)]
@@ -111,6 +122,9 @@ class Program
             // Get icon count
             int iconCount = (int)SendMessage(desktopListView, LVM_GETITEMCOUNT, 0, IntPtr.Zero);
 
+            // Collect icon data
+            var icons = new List<DesktopIcon>();
+
             for (int i = 0; i < iconCount; i++)
             {
                 // Allocate memory for POINT in explorer process
@@ -139,9 +153,19 @@ class Program
 
                 Console.WriteLine($"Icon: {iconText}, Position: ({pt.X}, {pt.Y})");
 
+                // Add to list
+                icons.Add(new DesktopIcon { Name = iconText, X = pt.X, Y = pt.Y });
+
                 // Free memory
                 VirtualFreeEx(hProcess, remotePoint, 0, MEM_RELEASE);
             }
+
+            // Save to JSON file
+            string downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + @"\Downloads\desktoplayout.json";
+            var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(downloads, JsonSerializer.Serialize(icons, jsonOptions));
+
+            Console.WriteLine($"Desktop layout saved as JSON to: {downloads}");
 
             CloseHandle(hProcess);
         }
