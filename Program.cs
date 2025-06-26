@@ -107,7 +107,26 @@ namespace WindowsDesktopLayout
         [DllImport("user32.dll", SetLastError = true)]
         static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, ref LVITEM lParam);
 
-        static void Main()
+        static void Main(string[] args)
+        {
+            string? arg = args.Length > 0 ? args[0] : null;
+            if (string.IsNullOrEmpty(arg) || arg.Equals("/s", StringComparison.OrdinalIgnoreCase))
+            {
+                SaveDesktop();
+            }
+            else if (arg.Equals("/r", StringComparison.OrdinalIgnoreCase))
+            {
+                RestoreDesktop();
+            }
+            else
+            {
+                Console.WriteLine("Usage: WindowsDesktopLayout [/s] [/r]");
+                Console.WriteLine("  /s   Save desktop layout (default)");
+                Console.WriteLine("  /r   Restore desktop layout");
+            }
+        }
+
+        static void SaveDesktop()
         {
             try
             {
@@ -278,6 +297,12 @@ namespace WindowsDesktopLayout
             {
                 Console.WriteLine($"Error: {ex.Message}");
             }
+        }
+
+        static void RestoreDesktop()
+        {
+            // TODO: Implement restore logic
+            Console.WriteLine("RestoreDesktop() is not yet implemented.");
         }
 
         static IntPtr GetDesktopListViewHandle()
