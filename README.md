@@ -7,10 +7,10 @@ I have my icons spread all over my Windows 11 (Preview) desktop. When I installe
 Command line interface to save and restore desktop icon layouts. Command Line arguments: /s and /r for saving and restoring layouts, respectively.
 - **Save Layout**: Capture the current positions of desktop icons and save them to a file.
 - **Restore Layout**: Restore the desktop icons to their previously saved positions.
-- **Command Line Support**: Use command line arguments to save (`/s`) or restore (`/r`) layouts without a GUI.
+- **Command Line Support**: Use command line arguments to save (`/s`) or restore (`/r`) layouts without a GUI. The default is to save the current layout.
 - **Cross-Version Compatibility**: Designed to work with Windows 11 and later versions.
 - **Simple and Lightweight**: No complex installation required, just run the executable. The save file is stored as a json file.
-- 
+
 ## Requirements
 
 - Windows 11 (tested on 25H2 and later)
