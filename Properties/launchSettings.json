@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "GetWindowsLayout": {
+      "commandName": "Project",
+      "commandLineArgs": "/s"
+    }
+  }
+}

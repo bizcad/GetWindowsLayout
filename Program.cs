@@ -27,8 +27,10 @@ namespace WindowsDesktopLayout
         const int LVM_GETITEMCOUNT = LVM_FIRST + 4;
         const int LVM_GETITEMPOSITION = LVM_FIRST + 16;
         const int LVM_GETITEMTEXTW = LVM_FIRST + 115;
+        const int LVM_SETITEMPOSITION = LVM_FIRST + 15; // Add this with the other constants
 
         const int MAX_PATH = 260;
+        private const string V = @"\Downloads\DesktopLayout.json";
 
         // Data structure for JSON serialization
         class DesktopIcon
@@ -43,6 +45,8 @@ namespace WindowsDesktopLayout
             public string? FileType { get; set; }
             public string? SpecialType { get; set; }
             public string? IconImageBase64 { get; set; }
+            public int Index { get; set; } // <-- Add this
+            public int ZOrder { get; set; } // <-- Add this
         }
 
         // Win32 structures
@@ -109,7 +113,8 @@ namespace WindowsDesktopLayout
 
         static void Main(string[] args)
         {
-            string? arg = args.Length > 0 ? args[0] : null;
+            List<string>? items = GetDesktopDirectoryItems();
+             string? arg = args.Length > 0 ? args[0] : null;
             if (string.IsNullOrEmpty(arg) || arg.Equals("/s", StringComparison.OrdinalIgnoreCase))
             {
                 SaveDesktop();
@@ -158,18 +163,17 @@ namespace WindowsDesktopLayout
                 string userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                 string commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
 
-                // Get all files and directories on both desktops
+                
                 var desktopFiles = new List<string>();
                 if (Directory.Exists(userDesktop))
                 {
-                    desktopFiles.AddRange(Directory.GetFiles(userDesktop));
+                    desktopFiles.AddRange(
+                        Directory.GetFiles(userDesktop)
+                            .Where(f => !f.Contains("desktop.ini", StringComparison.OrdinalIgnoreCase))
+                    );
                     desktopFiles.AddRange(Directory.GetDirectories(userDesktop));
                 }
-                if (Directory.Exists(commonDesktop))
-                {
-                    desktopFiles.AddRange(Directory.GetFiles(commonDesktop));
-                    desktopFiles.AddRange(Directory.GetDirectories(commonDesktop));
-                }
+
 
                 // Collect icon data
                 var icons = new List<DesktopIcon>();
@@ -277,15 +281,20 @@ namespace WindowsDesktopLayout
                         TargetPath = targetPath,
                         FileType = fileType,
                         SpecialType = specialType,
-                        IconImageBase64 = iconImageBase64
+                        IconImageBase64 = iconImageBase64,
+                        Index = i,         // Save the ListView index
+                        ZOrder = i         // Z-order is the same as index in the ListView
                     });
 
                     // Free memory
                     VirtualFreeEx(hProcess, remotePoint, 0, MEM_RELEASE);
                 }
 
+                // Sort icons by Name before saving
+                icons = icons.OrderBy(icon => icon.Index).ToList();
+
                 // Save to JSON file
-                string downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + @"\Downloads\desktoplayout.json";
+                string downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + V;
                 var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
                 File.WriteAllText(downloads, JsonSerializer.Serialize(icons, jsonOptions));
 
@@ -301,8 +310,154 @@ namespace WindowsDesktopLayout
 
         static void RestoreDesktop()
         {
-            // TODO: Implement restore logic
-            Console.WriteLine("RestoreDesktop() is not yet implemented.");
+            try
+            {
+                // Read the saved layout from JSON
+                string jsonPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + V;
+                if (!File.Exists(jsonPath))
+                {
+                    Console.WriteLine($"No saved layout found at: {jsonPath}");
+                    return;
+                }
+
+                var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                List<DesktopIcon>? savedIcons = JsonSerializer.Deserialize<List<DesktopIcon>>(File.ReadAllText(jsonPath), jsonOptions);
+                if (savedIcons == null)
+                {
+                    Console.WriteLine("Failed to deserialize saved layout.");
+                    return;
+                }
+
+                IntPtr desktopListView = GetDesktopListViewHandle();
+                if (desktopListView == IntPtr.Zero)
+                {
+                    Console.WriteLine("Could not find the desktop ListView handle.");
+                    return;
+                }
+
+                GetWindowThreadProcessId(desktopListView, out uint explorerPid);
+                IntPtr hProcess = OpenProcess(
+                    PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+                    false,
+                    explorerPid);
+
+                if (hProcess == IntPtr.Zero)
+                {
+                    Console.WriteLine("Could not open explorer.exe process.");
+                    return;
+                }
+
+                int iconCount = (int)SendMessage(desktopListView, LVM_GETITEMCOUNT, 0, IntPtr.Zero);
+
+                // Prepare desktop and public desktop paths
+                string userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                string commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+
+                // Get all files and directories on both desktops
+                var desktopFiles = new List<string>();
+                if (Directory.Exists(userDesktop))
+                {
+                    desktopFiles.AddRange(Directory.GetFiles(userDesktop));
+                    desktopFiles.AddRange(Directory.GetDirectories(userDesktop));
+                }
+                if (Directory.Exists(commonDesktop))
+                {
+                    desktopFiles.AddRange(Directory.GetFiles(commonDesktop));
+                    desktopFiles.AddRange(Directory.GetDirectories(commonDesktop));
+                }
+
+                for (int i = 0; i < iconCount; i++)
+                {                    
+                    // Get icon text
+                    string iconText = GetListViewItemText(desktopListView, hProcess, i);
+
+                    // Try to find the directory first by name (case-insensitive)
+                    string? folderPath = desktopFiles
+                        .Where(Directory.Exists)
+                        .FirstOrDefault(d =>
+                            string.Equals(Path.GetDirectoryName(d), iconText, StringComparison.OrdinalIgnoreCase));
+
+                    // Try to find the file first by name (case-insensitive)
+                    string? filePath = desktopFiles
+                        .Where(File.Exists)
+                        .FirstOrDefault(d =>
+                            string.Equals(Path.GetFileName(d), iconText, StringComparison.OrdinalIgnoreCase));
+
+                    // If not found as a directory, try to find a matching file (by name or name without extension)
+                    if (filePath == null)
+                    {
+                        filePath = desktopFiles
+                            .Where(File.Exists)
+                            .FirstOrDefault(f =>
+                                string.Equals(Path.GetFileNameWithoutExtension(f), iconText, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(Path.GetFileName(f), iconText, StringComparison.OrdinalIgnoreCase));
+                    }
+                    if (filePath is not null && filePath.Contains("CPUID"))
+                    {
+                        Debug.WriteLine($"Icon: {iconText}, FilePath: {filePath}");
+                    }
+
+                    // Only process if this is a file or directory (not a special icon)
+                    if (!string.IsNullOrEmpty(filePath))
+                    {
+                        // Try to find a matching saved icon by Name and FilePath
+                        var match = savedIcons.FirstOrDefault(saved =>
+                            string.Equals(saved.Name, iconText, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(saved.FilePath ?? "", filePath, StringComparison.OrdinalIgnoreCase));
+
+                        if (match != null)
+                        {
+                            // Read current icon position
+                            IntPtr remotePoint = VirtualAllocEx(hProcess, IntPtr.Zero, (uint)Marshal.SizeOf<POINT>(), MEM_COMMIT, PAGE_READWRITE);
+                            if (remotePoint == IntPtr.Zero)
+                            {
+                                Console.WriteLine($"Failed to allocate memory for icon '{iconText}'.");
+                                continue;
+                            }
+
+                            // Get current icon position
+                            SendMessage(desktopListView, LVM_GETITEMPOSITION, i, remotePoint);
+                            byte[] pointBuffer = new byte[Marshal.SizeOf<POINT>()];
+                            if (!ReadProcessMemory(hProcess, remotePoint, pointBuffer, pointBuffer.Length, out _))
+                            {
+                                Console.WriteLine($"Failed to read icon position for '{iconText}'.");
+                                VirtualFreeEx(hProcess, remotePoint, 0, MEM_RELEASE);
+                                continue;
+                            }
+                            POINT currentPt = ByteArrayToStructure<POINT>(pointBuffer);
+
+                            // If position matches, skip moving
+                            if (currentPt.X == match.X && currentPt.Y == match.Y)
+                            {
+                                VirtualFreeEx(hProcess, remotePoint, 0, MEM_RELEASE);
+                                continue;
+                            }
+
+                            // Write the saved POINT to the remote process
+                            POINT pt = new POINT { X = match.X, Y = match.Y };
+                            byte[] ptBytes = StructureToByteArray(pt);
+                            WriteProcessMemory(hProcess, remotePoint, ptBytes, ptBytes.Length, out _);
+
+                            // Set the icon position
+                            SendMessage(desktopListView, LVM_SETITEMPOSITION, i, remotePoint); 
+
+                            // Free memory
+                            VirtualFreeEx(hProcess, remotePoint, 0, MEM_RELEASE);
+
+                            Console.WriteLine($"Restored icon '{iconText}' to ({match.X}, {match.Y})");
+                        }
+                        // else: No match in JSON, so this is a new file/dir and should not be moved
+                    }
+                    // else: Not a file/dir, skip (special icon)
+                }
+
+                CloseHandle(hProcess);
+                Console.WriteLine("Desktop icon positions restored.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+            }
         }
 
         static IntPtr GetDesktopListViewHandle()
@@ -454,6 +609,25 @@ namespace WindowsDesktopLayout
                 Marshal.FreeHGlobal(ptr);
             }
             return arr;
+        }
+
+        static List<string> GetDesktopDirectoryItems()
+        {
+            var items = new List<string>();
+            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+            if (Directory.Exists(desktopPath))
+            {
+                // Add files (excluding "desktop.ini")
+                items.AddRange(
+                    Directory.GetFiles(desktopPath)
+                        .Where(f => !f.Contains("desktop.ini", StringComparison.OrdinalIgnoreCase))
+                );
+                // Add directories
+                items.AddRange(Directory.GetDirectories(desktopPath));
+            }
+
+            return items;
         }
     }
 }
